@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> Orbit Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Menggunakan font Inter dari Tailwind */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f3e8; /* Background krem lembut */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden; /* Menyembunyikan scrollbar */
+        }
+        .game-container {
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            border-radius: 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            background-color: #ffffff; /* Kontainer putih */
+            max-width: 90vw;
+            width: 500px;
+        }
+        canvas {
+            background-color: #2c3e50; /* Latar belakang canvas gelap */
+            display: block;
+            border-bottom: 4px solid #34495e;
+        }
+        #game-info {
+            background-color: #ffffff;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        #message-box {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(44, 62, 80, 0.9); /* Overlay gelap */
+            color: #ecf0f1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 100;
+            border-radius: 20px;
+            transition: opacity 0.5s ease;
+        }
+        .game-button {
+            padding: 0.75rem 1.5rem;
+            margin-top: 1rem;
+            background-color: #e74c3c; /* Merah untuk Mulai/Mulai Ulang */
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .game-button:hover {
+            background-color: #c0392b;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <!-- Informasi Game -->
+        <div id="game-info">
+            <span class="text-lg font-bold text-gray-800">Game Orbit</span>
+            <span id="score" class="text-xl font-semibold text-indigo-600">Skor: 0</span>
+        </div>
+
+        <!-- Canvas Game -->
+        <canvas id="gameCanvas" width="500" height="500"></canvas>
+
+        <!-- Kotak Pesan/Mulai -->
+        <div id="message-box">
+            <h1 class="text-4xl font-bold mb-4">Welcome!</h1>
+            <p class="text-xl mb-6">Tahan tombol panah KIRI atau KANAN untuk bergerak dan menghindari partikel.</p>
+            <button id="startButton" class="game-button">Start Game</button>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const messageBox = document.getElementById('message-box');
+        const scoreDisplay = document.getElementById('score');
+        const startButton = document.getElementById('startButton');
+
+        // --- Variabel Game ---
+        let animationFrameId;
+        let isGameOver = false;
+        let isGameRunning = false;
+        let score = 0;
+        let particleSpawnRate = 120; // Frame rate untuk spawn partikel (semakin kecil, semakin cepat)
+        let frameCount = 0;
+
+        // --- Konfigurasi Estetik ---
+        const colors = {
+            player: '#3498db', // Biru terang untuk pemain
+            center: '#f1c40f', // Emas untuk pusat
+            particle: 'rgba(236, 240, 241, 0.8)', // Putih keabu-abuan transparan
+            trail: 'rgba(52, 152, 219, 0.2)' // Jejak biru muda
+        };
+
+        // --- Obyek Pusat (Gravitasi) ---
+        const center = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 10
+        };
+
+        // --- Obyek Pemain ---
+        const player = {
+            angle: Math.PI / 2, // Posisi awal di atas
+            radius: 8,
+            distance: 120, // Jarak dari pusat
+            orbitSpeed: 0.04, // Kecepatan orbit dasar
+            currentOrbitSpeed: 0.04,
+            acceleration: 0.0005, // Akselerasi untuk perubahan kecepatan
+            maxSpeed: 0.08,
+            keys: { left: false, right: false }
+        };
+
+        // --- Obyek Partikel ---
+        let particles = [];
+        class Particle {
+            constructor() {
+                // Spawn partikel dari tepi canvas secara acak
+                let side = Math.floor(Math.random() * 4); // 0: atas, 1: kanan, 2: bawah, 3: kiri
+                let x, y;
+
+                if (side === 0) { // Atas
+                    x = Math.random() * canvas.width;
+                    y = -20;
+                } else if (side === 1) { // Kanan
+                    x = canvas.width + 20;
+                    y = Math.random() * canvas.height;
+                } else if (side === 2) { // Bawah
+                    x = Math.random() * canvas.width;
+                    y = canvas.height + 20;
+                } else { // Kiri
+                    x = -20;
+                    y = Math.random() * canvas.height;
+                }
+
+                this.x = x;
+                this.y = y;
+                this.radius = 4 + Math.random() * 4; // Ukuran bervariasi
+                this.speed = 1 + Math.random() * 2;
+                
+                // Bergerak menuju pusat
+                const angleToCenter = Math.atan2(center.y - this.y, center.x - this.x);
+                this.dx = Math.cos(angleToCenter) * this.speed;
+                this.dy = Math.sin(angleToCenter) * this.speed;
+            }
+
+            update() {
+                this.x += this.dx;
+                this.y += this.dy;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = colors.particle;
+                ctx.fill();
+            }
+        }
+
+        // --- Jejak Pemain ---
+        let playerTrail = [];
+        const maxTrailLength = 30;
+
+        // --- Fungsi Gambar ---
+        
+        function drawCenter() {
+            // Pusat (titik gravitasi)
+            ctx.beginPath();
+            ctx.arc(center.x, center.y, center.radius, 0, Math.PI * 2);
+            ctx.fillStyle = colors.center;
+            ctx.shadowColor = colors.center;
+            ctx.shadowBlur = 15;
+            ctx.fill();
+            ctx.shadowBlur = 0; // Reset shadow
+        }
+
+        function drawPlayer() {
+            // Hitung posisi pemain
+            const x = center.x + player.distance * Math.cos(player.angle);
+            const y = center.y + player.distance * Math.sin(player.angle);
+
+            // Simpan posisi untuk jejak
+            playerTrail.push({ x, y });
+            if (playerTrail.length > maxTrailLength) {
+                playerTrail.shift();
+            }
+
+            // Gambar jejak
+            ctx.strokeStyle = colors.trail;
+            ctx.lineWidth = player.radius / 2;
+            ctx.beginPath();
+            if (playerTrail.length > 1) {
+                ctx.moveTo(playerTrail[0].x, playerTrail[0].y);
+                for (let i = 1; i < playerTrail.length; i++) {
+                    // Gradasi transparansi pada jejak
+                    const alpha = i / maxTrailLength;
+                    ctx.strokeStyle = `rgba(52, 152, 219, ${alpha * 0.2})`; 
+                    ctx.lineTo(playerTrail[i].x, playerTrail[i].y);
+                }
+                ctx.stroke();
+            }
+
+            // Gambar pemain
+            ctx.beginPath();
+            ctx.arc(x, y, player.radius, 0, Math.PI * 2);
+            ctx.fillStyle = colors.player;
+            ctx.shadowColor = colors.player;
+            ctx.shadowBlur = 10;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            // Perbarui posisi pemain
+            player.x = x;
+            player.y = y;
+        }
+
+        function drawParticles() {
+            particles.forEach(p => p.draw());
+        }
+
+        // --- Fungsi Logika/Update ---
+
+        function updatePlayer() {
+            let targetSpeed = player.orbitSpeed; // Kecepatan default
+            
+            // Perbarui kecepatan orbit berdasarkan tombol yang ditekan
+            if (player.keys.left) {
+                targetSpeed = player.maxSpeed; // Percepat jika bergerak berlawanan jarum jam
+            } else if (player.keys.right) {
+                targetSpeed = -player.maxSpeed; // Percepat jika bergerak searah jarum jam
+            } else {
+                targetSpeed = 0; // Berhenti jika tidak ada tombol yang ditekan
+            }
+
+            // Interpolasi kecepatan (membuat gerakan lebih halus/smooth)
+            if (targetSpeed > 0) {
+                 player.currentOrbitSpeed = Math.min(player.currentOrbitSpeed + player.acceleration, targetSpeed);
+            } else if (targetSpeed < 0) {
+                 player.currentOrbitSpeed = Math.max(player.currentOrbitSpeed - player.acceleration, targetSpeed);
+            } else {
+                 // Perlambatan otomatis saat tombol dilepas
+                 if (player.currentOrbitSpeed > 0) {
+                    player.currentOrbitSpeed = Math.max(0, player.currentOrbitSpeed - player.acceleration * 2);
+                 } else if (player.currentOrbitSpeed < 0) {
+                    player.currentOrbitSpeed = Math.min(0, player.currentOrbitSpeed + player.acceleration * 2);
+                 }
+            }
+
+
+            // Terapkan kecepatan ke sudut
+            player.angle += player.currentOrbitSpeed;
+        }
+
+        function updateParticles() {
+            // Hapus partikel yang sudah keluar dari layar
+            particles = particles.filter(p => 
+                p.x > -50 && p.x < canvas.width + 50 &&
+                p.y > -50 && p.y < canvas.height + 50
+            );
+
+            // Perbarui posisi partikel
+            particles.forEach(p => p.update());
+
+            // Spawn partikel baru (frekuensi spawn meningkat seiring skor)
+            frameCount++;
+            const adjustedSpawnRate = Math.max(30, particleSpawnRate - Math.floor(score / 50) * 5); // Semakin tinggi skor, semakin cepat spawn
+
+            if (frameCount % adjustedSpawnRate === 0) {
+                particles.push(new Particle());
+            }
+        }
+
+        function checkCollision() {
+            const px = player.x;
+            const py = player.y;
+
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                const distance = Math.sqrt((px - p.x) ** 2 + (py - p.y) ** 2);
+                
+                // Tabrakan jika jarak lebih kecil dari jumlah radius
+                if (distance < player.radius + p.radius) {
+                    endGame("Tabrakan!");
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function updateScore() {
+            // Skor bertambah setiap frame saat game berjalan
+            score++;
+            scoreDisplay.textContent = `Skor: ${Math.floor(score / 10)}`;
+        }
+        
+        // --- Loop Utama Game ---
+
+        function gameLoop() {
+            if (!isGameRunning) return;
+
+            // Bersihkan canvas dengan warna gelap
+            ctx.fillStyle = '#2c3e50';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 1. Update Logika
+            updatePlayer();
+            updateParticles();
+            
+            if (frameCount % 10 === 0) { // Update skor setiap 10 frame
+                updateScore();
+            }
+
+            // 2. Cek Tabrakan
+            if (checkCollision()) {
+                return;
+            }
+
+            // 3. Gambar
+            drawCenter();
+            drawPlayer();
+            drawParticles();
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Fungsi Kontrol Game ---
+        
+        function startGame() {
+            if (isGameRunning) return;
+            
+            // Reset status
+            isGameOver = false;
+            isGameRunning = true;
+            score = 0;
+            frameCount = 0;
+            particles = [];
+            playerTrail = [];
+            scoreDisplay.textContent = 'Skor: 0';
+            player.currentOrbitSpeed = 0;
+            player.angle = Math.PI / 2; // Atur ulang posisi awal
+            
+            // Sembunyikan pesan
+            messageBox.style.opacity = '0';
+            setTimeout(() => { messageBox.style.display = 'none'; }, 500); // Tunggu transisi selesai
+
+            // Mulai loop
+            gameLoop();
+        }
+
+        function endGame(reason) {
+            isGameOver = true;
+            isGameRunning = false;
+            
+            cancelAnimationFrame(animationFrameId);
+
+            // Tampilkan pesan game over
+            messageBox.style.display = 'flex';
+            messageBox.style.opacity = '1';
+            messageBox.innerHTML = `
+                <h1 class="text-4xl font-bold mb-4">Game Over!</h1>
+                <p class="text-xl mb-2">${reason}</p>
+                <p class="text-2xl font-bold mb-6">Skor Akhir: ${Math.floor(score / 10)}</p>
+                <button id="restartButton" class="game-button">Main Lagi</button>
+            `;
+            document.getElementById('restartButton').addEventListener('click', startGame);
+        }
+
+        // --- Event Listener ---
+
+        // Fungsi penyesuaian ukuran canvas agar responsif
+        function resizeCanvas() {
+            const container = document.querySelector('.game-container');
+            const size = Math.min(container.clientWidth, 500);
+            canvas.width = size;
+            canvas.height = size;
+            center.x = canvas.width / 2;
+            center.y = canvas.height / 2;
+            
+            // Jika game sedang tidak berjalan, atur ulang posisi pesan
+            if (!isGameRunning) {
+                 messageBox.style.width = `${size}px`;
+                 messageBox.style.height = `${size}px`;
+            }
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('load', () => {
+             resizeCanvas();
+             // Menambahkan event listener ke tombol start
+             startButton.addEventListener('click', startGame);
+        });
+
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (isGameRunning) {
+                if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+                    player.keys.left = true;
+                } else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+                    player.keys.right = true;
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (isGameRunning) {
+                if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+                    player.keys.left = false;
+                } else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+                    player.keys.right = false;
+                }
+            }
+        });
+
+        // Touch controls (untuk perangkat mobile)
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (isGameRunning) {
+                const touchX = e.touches[0].clientX;
+                const canvasRect = canvas.getBoundingClientRect();
+                
+                // Menentukan sentuhan di kiri atau kanan canvas
+                if (touchX < canvasRect.left + canvasRect.width / 2) {
+                    player.keys.left = true;
+                    player.keys.right = false;
+                } else {
+                    player.keys.right = true;
+                    player.keys.left = false;
+                }
+            }
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+             e.preventDefault();
+             if (isGameRunning) {
+                player.keys.left = false;
+                player.keys.right = false;
+             }
+        });
+
+    </script>
+
+</body>
+</html>
